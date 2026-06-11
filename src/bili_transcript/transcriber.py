@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -43,10 +44,11 @@ def transcribe_audio(
     model_size: str,
     language: str,
     device: str,
+    progress_callback: Callable[[float, int], None] | None = None,
 ) -> list[Segment]:
     try:
         model = WhisperModel(model_size, device="cpu" if device == "auto" else device)
-        segments_iter, _info = model.transcribe(
+        segments_iter, info = model.transcribe(
             str(wav_path),
             language=None if language == "auto" else language,
             vad_filter=True,
@@ -54,6 +56,7 @@ def transcribe_audio(
     except Exception as exc:  # noqa: BLE001
         raise TranscriptionError(str(exc)) from exc
 
+    total_duration = float(getattr(info, "duration", 0.0))
     segments: list[Segment] = []
     for segment in segments_iter:
         text = cast(str, segment.text).strip()
@@ -62,4 +65,7 @@ def transcribe_audio(
         start = float(cast(float, segment.start))
         end = float(cast(float, segment.end))
         segments.append(Segment(start=start, end=max(end, start), text=text))
+        if progress_callback and total_duration > 0:
+            progress = min(start / total_duration, 1.0)
+            progress_callback(progress, len(segments))
     return segments

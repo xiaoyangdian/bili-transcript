@@ -6,6 +6,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.live import Live
+from rich.progress_bar import ProgressBar
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -43,24 +44,39 @@ _STEP_ERROR = "error"
 class StepTracker:
     def __init__(self, steps: list[str]) -> None:
         self._steps: list[dict[str, Any]] = [
-            {"label": s, "state": _STEP_PENDING, "detail": ""} for s in steps
+            {
+                "label": s,
+                "state": _STEP_PENDING,
+                "detail": "",
+                "progress": None,
+                "progress_extra": "",
+            }
+            for s in steps
         ]
         self._spinner = Spinner("dots")
 
     def start(self, index: int) -> None:
         self._steps[index]["state"] = _STEP_RUNNING
+        self._steps[index]["progress"] = None
 
     def done(self, index: int, detail: str = "") -> None:
         self._steps[index]["state"] = _STEP_DONE
         self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
 
     def skip(self, index: int, detail: str = "") -> None:
         self._steps[index]["state"] = _STEP_SKIP
         self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
 
     def error(self, index: int, detail: str = "") -> None:
         self._steps[index]["state"] = _STEP_ERROR
         self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
+
+    def set_progress(self, index: int, value: float, extra: str = "") -> None:
+        self._steps[index]["progress"] = max(0.0, min(1.0, value))
+        self._steps[index]["progress_extra"] = extra
 
     def render(self) -> Table:
         table = Table.grid(padding=(0, 1))
@@ -82,10 +98,24 @@ class StepTracker:
 
             label_style = "bold" if state == _STEP_RUNNING else ("dim" if state == _STEP_PENDING else "")
             detail_style = "dim" if state != _STEP_ERROR else "red"
+
+            progress = step.get("progress")
+            if state == _STEP_RUNNING and progress is not None:
+                bar = ProgressBar(total=1.0, completed=progress, width=16)
+                pct = f"{progress * 100:.0f}%"
+                extra = str(step.get("progress_extra") or "")
+                detail = Table.grid(padding=(0, 1))
+                detail.add_column()
+                detail.add_column()
+                detail.add_column()
+                detail.add_row(bar, Text(pct, style="bold cyan"), Text(extra, style="dim"))
+            else:
+                detail = Text(str(step["detail"]), style=detail_style)
+
             table.add_row(
                 icon,
                 Text(step["label"], style=label_style),
-                Text(str(step["detail"]), style=detail_style),
+                detail,
             )
         return table
 
@@ -239,8 +269,19 @@ def main() -> None:
 
                 tracker.start(STEP_TRANSCRIBE)
                 refresh()
+
+                def _on_progress(progress: float, count: int) -> None:
+                    tracker.set_progress(STEP_TRANSCRIBE, progress, f"{count} 条")
+                    refresh()
+
                 try:
-                    segments = transcribe_audio(wav_path, args.model, args.lang, args.device)
+                    segments = transcribe_audio(
+                        wav_path,
+                        args.model,
+                        args.lang,
+                        args.device,
+                        progress_callback=_on_progress,
+                    )
                 except TranscriptionError as exc:
                     tracker.error(STEP_TRANSCRIBE, str(exc))
                     refresh()
