@@ -4,11 +4,11 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
+import imageio_ffmpeg
 from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
 from bili_transcript.config import SAMPLE_RATE
 from bili_transcript.models import Segment
-from bili_transcript.utils import require_binary
 
 
 class TranscriptionError(RuntimeError):
@@ -18,7 +18,7 @@ class TranscriptionError(RuntimeError):
 def convert_to_wav(audio_path: Path, wav_path: Path) -> Path:
     if audio_path.resolve() == wav_path.resolve():
         return wav_path
-    ffmpeg = require_binary("ffmpeg")
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     wav_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         ffmpeg,

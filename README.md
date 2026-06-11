@@ -21,8 +21,7 @@ B站视频字幕提取与转写工具。
 
 ## 安装
 
-1. 安装系统依赖：`ffmpeg`
-2. 安装 Python 依赖：
+安装 Python 依赖：
 
 ```bash
 uv sync
