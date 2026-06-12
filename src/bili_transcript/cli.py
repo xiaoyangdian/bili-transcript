@@ -135,7 +135,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="输出格式（默认：all）",
     )
-    parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help="Whisper 模型大小")
+    parser.add_argument(
+        "-m", "--model", default=DEFAULT_MODEL, help="模型：Whisper 大小 (tiny/base/small/medium/large) 或 sensevoice"
+    )
     parser.add_argument("-l", "--lang", default=DEFAULT_LANGUAGE, help="语言，默认自动检测")
     parser.add_argument("-o", "--output", default=None, help="输出目录（默认：./output）")
     parser.add_argument("--temp-dir", default=str(DEFAULT_TEMP_DIR), help="临时文件目录")
@@ -145,8 +147,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="chrome",
         help="从浏览器读取 Cookie（默认：chrome）",
     )
-    parser.add_argument("--force-whisper", action="store_true", help="忽略 B 站字幕，强制 Whisper 转写")
-    parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件")
+    parser.add_argument("--force-whisper", action="store_true", help="忽略 B 站字幕，强制转写")
+    parser.add_argument("--clean-temp", action="store_true", help="转写完成后删除临时音频文件")
     return parser
 
 
@@ -168,9 +170,11 @@ def main() -> None:
         "提取 B 站字幕",
         "下载音频",
         "音频转码 (WAV)",
-        "Whisper 转写",
+        "转写音频",
         f"导出文件 → {output_hint}",
     ]
+
+    model_label = "SenseVoice" if args.model.lower() == "sensevoice" else f"Whisper ({args.model})"
 
     STEP_PARSE = 0
     STEP_FETCH = 1
@@ -286,13 +290,14 @@ def main() -> None:
                     tracker.error(STEP_TRANSCRIBE, str(exc))
                     refresh()
                     raise SystemExit(1)
-                tracker.done(STEP_TRANSCRIBE, f"{len(segments)} 条")
+                tracker.done(STEP_TRANSCRIBE, f"{len(segments)} 条 ({model_label})")
                 refresh()
 
-                meta = build_meta(info, canonical_url, video_id, "whisper")
+                source = "sensevoice" if args.model.lower() == "sensevoice" else "whisper"
+                meta = build_meta(info, canonical_url, video_id, source)
                 result = TranscriptResult(meta=meta, segments=segments)
 
-                if not args.keep_audio:
+                if args.clean_temp:
                     for path in {audio_path, wav_path}:
                         if path.exists():
                             path.unlink()

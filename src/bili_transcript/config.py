@@ -7,6 +7,7 @@ DEFAULT_OUTPUT_DIR = Path("output")
 DEFAULT_TEMP_DIR = Path("temp")
 DEFAULT_FORMATS = ("txt", "srt", "json")
 DEFAULT_MODEL = "base"
+DEFAULT_MODEL_SENSEVOICE = "sensevoice"
 DEFAULT_LANGUAGE = "auto"
 DEFAULT_DEVICE = "auto"
 SAMPLE_RATE = 16000
