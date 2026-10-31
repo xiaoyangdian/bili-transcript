@@ -1,0 +1,378 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+from rich.console import Console
+from rich.live import Live
+from rich.progress_bar import ProgressBar
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
+
+from bili_transcript.config import (
+    DEFAULT_DEVICE,
+    DEFAULT_FORMATS,
+    DEFAULT_LANGUAGE,
+    DEFAULT_MODEL,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_TEMP_DIR,
+)
+from bili_transcript.douyin import download_direct
+from bili_transcript.exporters import export_json, export_srt, export_txt
+from bili_transcript.fetcher import (
+    BILIBILI_REFERER,
+    FetchError,
+    build_meta,
+    download_audio,
+    extract_subtitle_segments,
+    fetch_video_info,
+)
+from bili_transcript.models import TranscriptResult
+from bili_transcript.sources import SourceError, resolve_source
+from bili_transcript.transcriber import TranscriptionError, convert_to_wav, transcribe_audio
+from bili_transcript.utils import ensure_dir, sanitize_filename
+
+console = Console()
+
+_STEP_PENDING = "pending"
+_STEP_RUNNING = "running"
+_STEP_DONE = "done"
+_STEP_SKIP = "skip"
+_STEP_ERROR = "error"
+
+
+class StepTracker:
+    def __init__(self, steps: list[str]) -> None:
+        self._steps: list[dict[str, Any]] = [
+            {
+                "label": s,
+                "state": _STEP_PENDING,
+                "detail": "",
+                "progress": None,
+                "progress_extra": "",
+            }
+            for s in steps
+        ]
+        self._spinner = Spinner("dots")
+
+    def start(self, index: int) -> None:
+        self._steps[index]["state"] = _STEP_RUNNING
+        self._steps[index]["progress"] = None
+
+    def done(self, index: int, detail: str = "") -> None:
+        self._steps[index]["state"] = _STEP_DONE
+        self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
+
+    def skip(self, index: int, detail: str = "") -> None:
+        self._steps[index]["state"] = _STEP_SKIP
+        self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
+
+    def error(self, index: int, detail: str = "") -> None:
+        self._steps[index]["state"] = _STEP_ERROR
+        self._steps[index]["detail"] = detail
+        self._steps[index]["progress"] = None
+
+    def set_progress(self, index: int, value: float, extra: str = "") -> None:
+        self._steps[index]["progress"] = max(0.0, min(1.0, value))
+        self._steps[index]["progress_extra"] = extra
+
+    def render(self) -> Table:
+        table = Table.grid(padding=(0, 1))
+        table.add_column(width=3)
+        table.add_column(min_width=20)
+        table.add_column()
+        for step in self._steps:
+            state = step["state"]
+            if state == _STEP_PENDING:
+                icon: Any = Text("○", style="dim")
+            elif state == _STEP_RUNNING:
+                icon = self._spinner
+            elif state == _STEP_DONE:
+                icon = Text("✓", style="bold green")
+            elif state == _STEP_SKIP:
+                icon = Text("‒", style="dim")
+            else:
+                icon = Text("✗", style="bold red")
+
+            label_style = "bold" if state == _STEP_RUNNING else ("dim" if state == _STEP_PENDING else "")
+            detail_style = "dim" if state != _STEP_ERROR else "red"
+
+            progress = step.get("progress")
+            if state == _STEP_RUNNING and progress is not None:
+                bar = ProgressBar(total=1.0, completed=progress, width=16)
+                pct = f"{progress * 100:.0f}%"
+                extra = str(step.get("progress_extra") or "")
+                detail = Table.grid(padding=(0, 1))
+                detail.add_column()
+                detail.add_column()
+                detail.add_column()
+                detail.add_row(bar, Text(pct, style="bold cyan"), Text(extra, style="dim"))
+            else:
+                detail = Text(str(step["detail"]), style=detail_style)
+
+            table.add_row(
+                icon,
+                Text(step["label"], style=label_style),
+                detail,
+            )
+        return table
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="bili-transcript",
+        description="下载 B 站/抖音视频字幕，或转写本地音视频",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  bili-transcript BV1w7NTzXEqQ\n"
+            "  bili-transcript https://www.bilibili.com/video/BV1w7NTzXEqQ/\n"
+            "  bili-transcript https://v.douyin.com/xxxx/\n"
+            "  bili-transcript D:\\video.mp4"
+        ),
+    )
+    parser.add_argument("input", nargs="?", help="B 站/抖音链接、BV 号，或本地音视频文件路径")
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["txt", "srt", "json", "all"],
+        default="all",
+        help="输出格式（默认：all）",
+    )
+    parser.add_argument(
+        "-m", "--model", default=DEFAULT_MODEL, help="模型：Whisper 大小 (tiny/base/small/medium/large) 或 sensevoice"
+    )
+    parser.add_argument("-l", "--lang", default=DEFAULT_LANGUAGE, help="语言，默认自动检测")
+    parser.add_argument("-o", "--output", default=None, help="输出目录（默认：./output）")
+    parser.add_argument("--temp-dir", default=str(DEFAULT_TEMP_DIR), help="临时文件目录")
+    parser.add_argument("--device", default=DEFAULT_DEVICE, help="Whisper 计算设备")
+    parser.add_argument(
+        "--cookies-from-browser",
+        default="chrome",
+        help="从浏览器读取 Cookie（默认：chrome）",
+    )
+    parser.add_argument("--force-whisper", action="store_true", help="忽略 B 站字幕，强制转写")
+    parser.add_argument("--clean-temp", action="store_true", help="转写完成后删除临时音频文件")
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if not args.input:
+        console.print("[bold red]错误：未提供视频链接、BV 号或本地文件路径[/bold red]")
+        console.print()
+        parser.print_help()
+        raise SystemExit(1)
+
+    output_hint = args.output or str(DEFAULT_OUTPUT_DIR)
+
+    steps = [
+        "解析链接",
+        "获取视频信息",
+        "提取 B 站字幕",
+        "下载音频",
+        "音频转码 (WAV)",
+        "转写音频",
+        f"导出文件 → {output_hint}",
+    ]
+
+    model_label = "SenseVoice" if args.model.lower() == "sensevoice" else f"Whisper ({args.model})"
+
+    STEP_PARSE = 0
+    STEP_FETCH = 1
+    STEP_SUBTITLE = 2
+    STEP_DOWNLOAD = 3
+    STEP_CONVERT = 4
+    STEP_TRANSCRIBE = 5
+    STEP_EXPORT = 6
+
+    tracker = StepTracker(steps)
+
+    with Live(tracker.render(), console=console, refresh_per_second=12) as live:
+        def refresh() -> None:
+            live.update(tracker.render())
+
+        try:
+            tracker.start(STEP_PARSE)
+            refresh()
+            try:
+                source = resolve_source(args.input)
+            except SourceError as exc:
+                tracker.error(STEP_PARSE, str(exc))
+                refresh()
+                raise SystemExit(1) from exc
+            tracker.done(STEP_PARSE, f"{source.platform} · {source.video_id}")
+            refresh()
+
+            referer = BILIBILI_REFERER if source.kind == "bilibili" else None
+            if source.kind != "bilibili":
+                tracker._steps[STEP_SUBTITLE]["label"] = "提取平台字幕"
+
+            output_dir = ensure_dir(Path(args.output) if args.output else DEFAULT_OUTPUT_DIR)
+            temp_dir = ensure_dir(Path(args.temp_dir))
+            tracker._steps[STEP_EXPORT]["label"] = f"导出文件 → {output_dir.resolve()}"
+
+            info: dict[str, object] | None
+            if source.kind == "local":
+                info = {"id": source.video_id, "title": Path(source.url).stem}
+                tracker.skip(STEP_FETCH, f"{Path(source.url).name}（本地文件）")
+                refresh()
+            else:
+                tracker.start(STEP_FETCH)
+                refresh()
+                try:
+                    info = fetch_video_info(source.url, args.cookies_from_browser, referer)
+                except FetchError as exc:
+                    if source.kind != "douyin":
+                        tracker.error(STEP_FETCH, f"{exc}（检查网络或 Cookie 设置）")
+                        refresh()
+                        raise SystemExit(1) from exc
+                    info = None
+                    tracker.skip(STEP_FETCH, "获取失败，改用无登录直连下载")
+                    refresh()
+                else:
+                    title = str(info.get("title") or source.video_id)
+                    uploader = str(info.get("uploader") or "")
+                    duration_val = info.get("duration")
+                    duration_str = ""
+                    if isinstance(duration_val, int | float):
+                        minutes, seconds = divmod(int(duration_val), 60)
+                        duration_str = f"{minutes}:{seconds:02d}"
+                    detail_parts = [p for p in [title, uploader, duration_str] if p]
+                    tracker.done(STEP_FETCH, "  ".join(detail_parts))
+                    refresh()
+
+            subtitle_segments = None
+            if args.force_whisper:
+                tracker.skip(STEP_SUBTITLE, "已跳过（--force-whisper）")
+                refresh()
+            elif source.kind == "local":
+                tracker.skip(STEP_SUBTITLE, "本地文件无平台字幕")
+                refresh()
+            elif info is None:
+                tracker.skip(STEP_SUBTITLE, "无视频信息，跳过")
+                refresh()
+            else:
+                tracker.start(STEP_SUBTITLE)
+                refresh()
+                subtitle_segments = extract_subtitle_segments(
+                    info, args.cookies_from_browser, referer
+                )
+                if subtitle_segments:
+                    tracker.done(STEP_SUBTITLE, f"{len(subtitle_segments)} 条")
+                    refresh()
+                else:
+                    tracker.skip(STEP_SUBTITLE, "未找到，将使用 Whisper 转写")
+                    refresh()
+
+            if subtitle_segments:
+                tracker.skip(STEP_DOWNLOAD, "已跳过")
+                tracker.skip(STEP_CONVERT, "已跳过")
+                tracker.skip(STEP_TRANSCRIBE, "已跳过")
+                refresh()
+                meta = build_meta(info or {}, source.url, source.video_id, source.kind)
+                result = TranscriptResult(meta=meta, segments=subtitle_segments)
+            else:
+                fallback_info: dict[str, object] = {}
+
+                def _douyin_fallback(tmp: Path) -> Path:
+                    path, payload = download_direct(source.url, tmp)
+                    fallback_info.update(payload)
+                    return path
+
+                if source.kind == "local":
+                    tracker.skip(STEP_DOWNLOAD, "本地文件，无需下载")
+                    refresh()
+                    audio_path = Path(source.url)
+                else:
+                    tracker.start(STEP_DOWNLOAD)
+                    refresh()
+                    try:
+                        audio_path = download_audio(
+                            source.url,
+                            temp_dir,
+                            source.video_id,
+                            args.cookies_from_browser,
+                            referer,
+                            _douyin_fallback if source.kind == "douyin" else None,
+                        )
+                    except FetchError as exc:
+                        tracker.error(STEP_DOWNLOAD, str(exc))
+                        refresh()
+                        raise SystemExit(1) from exc
+                    tracker.done(STEP_DOWNLOAD, audio_path.name)
+                    refresh()
+
+                if info is None:
+                    info = fallback_info or {"id": source.video_id, "title": source.video_id}
+
+                tracker.start(STEP_CONVERT)
+                refresh()
+                wav_path = temp_dir / f"{source.video_id}.converted.wav"
+                try:
+                    convert_to_wav(audio_path, wav_path)
+                except TranscriptionError as exc:
+                    tracker.error(STEP_CONVERT, str(exc))
+                    refresh()
+                    raise SystemExit(1) from exc
+                tracker.done(STEP_CONVERT)
+                refresh()
+
+                tracker.start(STEP_TRANSCRIBE)
+                refresh()
+
+                def _on_progress(progress: float, count: int) -> None:
+                    tracker.set_progress(STEP_TRANSCRIBE, progress, f"{count} 条")
+                    refresh()
+
+                try:
+                    segments = transcribe_audio(
+                        wav_path,
+                        args.model,
+                        args.lang,
+                        args.device,
+                        progress_callback=_on_progress,
+                    )
+                except TranscriptionError as exc:
+                    tracker.error(STEP_TRANSCRIBE, str(exc))
+                    refresh()
+                    raise SystemExit(1) from exc
+                tracker.done(STEP_TRANSCRIBE, f"{len(segments)} 条 ({model_label})")
+                refresh()
+
+                source_label = "sensevoice" if args.model.lower() == "sensevoice" else "whisper"
+                meta = build_meta(info, source.url, source.video_id, source_label)
+                result = TranscriptResult(meta=meta, segments=segments)
+
+                if args.clean_temp and source.kind != "local":
+                    for path in {audio_path, wav_path}:
+                        if path.exists():
+                            path.unlink()
+
+            tracker.start(STEP_EXPORT)
+            refresh()
+            base_name = sanitize_filename(result.meta.title or result.meta.video_id)
+            formats = DEFAULT_FORMATS if args.format == "all" else (args.format,)
+            saved_paths: list[Path] = []
+            for fmt in formats:
+                destination = output_dir / f"{base_name}.{fmt}"
+                if fmt == "txt":
+                    saved_paths.append(export_txt(result, destination))
+                elif fmt == "srt":
+                    saved_paths.append(export_srt(result, destination))
+                elif fmt == "json":
+                    saved_paths.append(export_json(result, destination))
+            tracker.done(STEP_EXPORT, "  ".join(p.name for p in saved_paths))
+            refresh()
+
+        except SystemExit:
+            raise
+        except (FetchError, TranscriptionError, RuntimeError) as exc:
+            console.print(f"\n[bold red]错误：{exc}[/bold red]")
+            raise SystemExit(1) from exc
