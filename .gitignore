@@ -10,7 +10,7 @@ wheels/
 .venv
 
 # Others
-output/
+# output/ 中的转写稿需入库，勿加入忽略；temp/ 只放临时音视频
 temp/
 .history/
 .DS_Store
