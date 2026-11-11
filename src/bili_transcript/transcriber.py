@@ -76,26 +76,36 @@ def transcribe_audio(
     return segments
 
 
-_SV_TAG_RE = re.compile(r"(?:<\|[a-zA-Z_0-9]+\|>)+")
+_SV_TAG_RE = re.compile(r"<\s*\|\s*[^|]*?\|\s*>")
+_SV_TAG_SPLIT_RE = re.compile(r"(?=<\s*\|\s*[^|]*?\|\s*>)")
+_SV_LEADING_PUNCT_RE = re.compile(r"^[\s，,。.！？!?、；;：:]+")
+_SV_MEANINGFUL_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+_SV_REPEATED_PHRASE_RE = re.compile(r"(.{3,8}?)\1{2,}")
+
+
+def _clean_sv_fragment(text: str) -> str:
+    text = _SV_TAG_RE.sub("", text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"[。.]{2,}", "。", text)
+    return text.strip()
 
 
 def _extract_sentences_from_sensevoice(text: str) -> list[str]:
-    """把 SenseVoice 带标签的长文本拆成句子列表。"""
-    parts = re.split(r"(?=<\|[a-zA-Z_0-9]+\|>)", text)
+    """把 SenseVoice 带标签的长文本拆成可读句子。"""
     sentences: list[str] = []
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        clean = _SV_TAG_RE.sub("", part).strip()
+    for part in _SV_TAG_SPLIT_RE.split(text):
+        clean = _clean_sv_fragment(part)
         if not clean:
             continue
         # 按句子结束符切分，保留结束符在句尾
-        subs = re.split(r"(?<=[。！？.?!])", clean)
-        for s in subs:
-            s = s.strip()
-            if s:
-                sentences.append(s)
+        for fragment in re.split(r"(?<=[。！？.?!])", clean):
+            sentence = _SV_LEADING_PUNCT_RE.sub("", fragment.strip()).strip()
+            sentence = _SV_REPEATED_PHRASE_RE.sub(r"\1", sentence)
+            if not _SV_MEANINGFUL_RE.search(sentence):
+                continue
+            if sentences and sentences[-1] == sentence:
+                continue
+            sentences.append(sentence)
     return sentences
 
 
@@ -126,8 +136,10 @@ def _transcribe_sensevoice(
             model="iic/SenseVoiceSmall",
             vad_model="fsmn-vad",
             vad_kwargs={"max_single_segment_time": 30000},
+            punc_model="ct-punc",
             disable_pbar=True,
             disable_log=True,
+            disable_update=True,
         )
     except Exception as exc:
         raise TranscriptionError(f"加载 SenseVoice 模型失败: {exc}") from exc
