@@ -76,6 +76,17 @@ uv run bili-transcript "https://www.bilibili.com/video/BV1UyDzBpEeo/" --force-wh
 - `-m, --model`：Whisper 模型大小，如 `base`、`small`
 - `-l, --lang`：识别语言，默认 `auto`
 
+## 下载 B 站视频 / 合集
+
+主流程只取音频用于转写；要保存完整 mp4（含 UGC 合集的全部集数）用 `scripts/download_bili_collection.py`：
+
+```bash
+.venv\Scripts\python.exe scripts/download_bili_collection.py BV1pV411J7qj --list
+.venv\Scripts\python.exe scripts/download_bili_collection.py BV1pV411J7qj
+```
+
+合集结构、画质与 cookie、ffmpeg 合并以及本机环境踩坑见 `docs/bilibili-download.md`。
+
 ## AI Skill
 
 本项目附带一个 AI agent skill（`.skills/fetching-bilibili-transcripts/`），可自动识别用户意图并调用本工具获取 B 站视频文字稿。将 skill 目录复制到 `~/.agents/skills/` 即可启用。
