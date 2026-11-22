@@ -19,7 +19,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$uv = "C:\Users\DELL\.local\bin\uv.exe"
+$uv = "D:\tools\uv-pkg\bin\uv.exe"
+$env:UV_CACHE_DIR = "D:\tools\uv-cache"
+$env:HF_HOME = "D:\tools\hf-cache"
+$env:HF_HUB_DISABLE_XET = "1"
 
 # 本机必需的降级版本；uv run 会按 lock 文件回滚，所以每次运行前先确保一遍
 & $uv pip install --quiet "ctranslate2==4.4.0" "onnxruntime==1.20.1" "setuptools<81" --default-index https://pypi.org/simple
