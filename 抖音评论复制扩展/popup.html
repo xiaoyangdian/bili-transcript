@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>抖音评论复制</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #1f1f25;
+      background: #fff;
+    }
+    h1 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+    .hint { margin: 0 0 14px; font-size: 12px; color: #6b6b75; line-height: 1.6; }
+    button {
+      width: 100%;
+      padding: 9px;
+      border: 1px solid #fe2c55;
+      border-radius: 8px;
+      background: #fe2c55;
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { background: #e8264c; }
+    button:disabled { opacity: .6; cursor: default; }
+    .status { margin-top: 10px; min-height: 16px; font-size: 12px; color: #3a8a54; line-height: 1.5; }
+    .status.error { color: #d83b4b; }
+  </style>
+</head>
+<body>
+  <h1>抖音评论复制</h1>
+  <p class="hint">每条评论旁有一个红色「复制」按钮：<br>点主评论会先自动点掉「展开N条回复」加载完整楼层，再复制整楼；点回复只复制该条。</p>
+  <button id="refresh">重新注入复制按钮</button>
+  <div id="status" class="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

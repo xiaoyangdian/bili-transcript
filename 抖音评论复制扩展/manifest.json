@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "抖音评论/回复一键复制",
+  "version": "1.0.0",
+  "description": "一键复制抖音视频评论区的评论与回复，支持抓取未展开的回复、两种输出格式。",
+  "permissions": ["activeTab", "scripting", "clipboardWrite"],
+  "host_permissions": ["https://www.douyin.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "抖音评论/回复一键复制"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.douyin.com/video/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
