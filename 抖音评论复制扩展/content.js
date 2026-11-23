@@ -371,12 +371,16 @@
     });
   }
 
-  injectAll();
-  const observer = new MutationObserver(scheduleInject);
-  observer.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+  // 网络捕获/导航捕获在所有抖音页都要跑；复制按钮只注入视频页
+  const isVideoPage = /^\/video\//.test(location.pathname);
+  if (isVideoPage) {
+    injectAll();
+    const observer = new MutationObserver(scheduleInject);
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
 
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (!request) return false;
@@ -413,9 +417,71 @@
     const data = event.data;
     if (!data || !data.__dyNetCapture) return;
     try {
-      chrome.runtime.sendMessage({ type: 'DY_NET_CAPTURE', payload: data.__dyNetCapture }, () => {
+      const p = data.__dyNetCapture;
+      chrome.runtime.sendMessage({ type: 'DY_NET_CAPTURE', payload: p }, () => {
         void chrome.runtime.lastError;
       });
+      let selfFrom = null;
+      if (p.kind === 'self-profile' && p.body) {
+        try {
+          const j = JSON.parse(p.body);
+          const u = j.user || j;
+          if (u && (u.uid || u.sec_uid)) selfFrom = u;
+        } catch (_) {}
+      }
+      // 发表评论响应里带完整 comment.user，也能识别「自己」
+      if (p.kind === 'comment-publish' && p.body) {
+        try {
+          const j = JSON.parse(p.body);
+          const u = j.comment && j.comment.user;
+          if (u && (u.uid || u.sec_uid)) selfFrom = u;
+        } catch (_) {}
+      }
+      if (selfFrom) {
+        chrome.runtime.sendMessage({
+          type: 'DY_SELF_SET',
+          payload: {
+            uid: String(selfFrom.uid || ''), sec_uid: String(selfFrom.sec_uid || ''),
+            nickname: String(selfFrom.nickname || ''),
+            avatar: (selfFrom.avatar_thumb && selfFrom.avatar_thumb.url_list && selfFrom.avatar_thumb.url_list[0]) || ''
+          }
+        }, () => { void chrome.runtime.lastError; });
+      }
     } catch (_) {}
   });
+
+  // 通过 insert_ids 跳进来时自动展开评论区：抖音 PC 端用快捷键 x 打开评论面板，
+  // insert_ids 只让接口置顶目标评论、不会自动打开面板，所以这里补一个 x 键。
+  (function autoOpenCommentPanel() {
+    let u;
+    try { u = new URL(location.href); } catch (_) { return; }
+    if (!u.searchParams.get('insert_ids')) return;
+    let last = 0;
+    let tries = 0;
+    function pressX() {
+      const init = { key: 'x', code: 'KeyX', keyCode: 88, which: 88, bubbles: true, cancelable: true };
+      try {
+        document.dispatchEvent(new KeyboardEvent('keydown', init));
+      } catch (_) {
+        const ev = document.createEvent('Event');
+        ev.initEvent('keydown', true, true);
+        ev.key = 'x';
+        ev.keyCode = 88;
+        ev.which = 88;
+        document.dispatchEvent(ev);
+      }
+      tries++;
+      log('自动展开评论区：派发 x 键', tries);
+    }
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(ITEM)) { observer.disconnect(); return; }
+      const now = Date.now();
+      if (now - last < 500 || tries >= 12) return;
+      last = now;
+      pressX();
+    });
+    const target = document.body || document.documentElement;
+    observer.observe(target, { childList: true, subtree: true });
+    setTimeout(pressX, 800);
+  })();
 })();

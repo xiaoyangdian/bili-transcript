@@ -4,7 +4,9 @@
   const MAX_COUNT = 5;
   const STORE_STATS = 'dy_net_stats_v1';
   const STORE_CAPTURES = 'dy_net_captures_v1';
+  const STORE_SELF = 'dy_self_v1';
   const CAPTURE_LIMIT = 300;
+  let selfUser = null;
 
   const stats = new Map();
   const captures = [];
@@ -22,6 +24,11 @@
 
   function guessKind(url) {
     const p = String(url).toLowerCase();
+    if (/\/comment\/publish/.test(p)) return 'comment-publish';
+    if (/\/comment\/delete/.test(p)) return 'comment-delete';
+    if (/passport\/safe\/query_decision/.test(p)) return 'captcha-decision';
+    if (/passport\/web\/send_code/.test(p)) return 'captcha-send-code';
+    if (/passport\/web\/validate_code/.test(p)) return 'captcha-validate';
     if (/\/comment\/list\/reply|reply\/list|comment\/reply|getreply/.test(p)) return 'reply-list';
     if (/\/comment\/list/.test(p)) return 'comment-list';
     if (/comment/.test(p)) return 'comment-other';
@@ -37,6 +44,7 @@
       if (Array.isArray(data[STORE_CAPTURES])) {
         captures.push(...data[STORE_CAPTURES].slice(-CAPTURE_LIMIT));
       }
+      if (data[STORE_SELF]) selfUser = data[STORE_SELF];
     } catch (_) {}
   }
 
@@ -102,7 +110,22 @@
     if (!msg || typeof msg.type !== 'string') return false;
 
     if (msg.type === 'DY_NET_GET') {
-      sendResponse(listView());
+      const view = listView();
+      view.self = selfUser;
+      sendResponse(view);
+      return false;
+    }
+    if (msg.type === 'DY_SELF_SET') {
+      const p = msg.payload || {};
+      if (p.uid || p.sec_uid) {
+        selfUser = { uid: p.uid || '', secUid: p.sec_uid || '', nickname: p.nickname || '', avatar: p.avatar || '' };
+        chrome.storage.local.set({ [STORE_SELF]: selfUser });
+      }
+      sendResponse({ ok: true, self: selfUser });
+      return false;
+    }
+    if (msg.type === 'DY_SELF_GET') {
+      sendResponse({ ok: true, self: selfUser });
       return false;
     }
     if (msg.type === 'DY_NET_CLEAR') {
@@ -135,7 +158,8 @@
           maxTime: p.maxTime || '',
           minTime: p.minTime || '',
           noticeGroup: p.noticeGroup || '',
-          body: typeof p.body === 'string' ? p.body.slice(0, 200000) : ''
+          body: typeof p.body === 'string' ? p.body.slice(0, 200000) : '',
+          reqBody: typeof p.reqBody === 'string' ? p.reqBody.slice(0, 20000) : ''
         });
         if (captures.length > CAPTURE_LIMIT) captures.splice(0, captures.length - CAPTURE_LIMIT);
         scheduleSave();

@@ -123,6 +123,9 @@
   function kindTag(kind) {
     if (kind === 'reply-list') return '<span class="tag reply">疑似回复列表</span>';
     if (kind === 'comment-list') return '<span class="tag comment">疑似评论列表</span>';
+    if (kind === 'comment-publish') return '<span class="tag reply">发表评论</span>';
+    if (kind === 'comment-delete') return '<span class="tag reply">删除评论</span>';
+    if (/^captcha/.test(kind)) return '<span class="tag more">验证码</span>';
     if (kind === 'comment-other') return '<span class="tag">评论相关</span>';
     return '<span class="tag">其他</span>';
   }
@@ -172,8 +175,12 @@
       const div = document.createElement('div');
       div.className = 'item' + (c.kind === 'reply' ? ' hit' : '');
       const KIND_LABELS = {
-        reply: '回复', comment: '评论', 'notice-list': '通知列表',
-        'notice-count': '未读数', 'im-message': '私信消息', 'im-conversation': '会话列表'
+        reply: '回复', comment: '评论', 'comment-publish': '发表评论',
+        'comment-delete': '删除评论', 'comment-other': '评论相关',
+        'notice-list': '通知列表', 'notice-count': '未读数',
+        'im-message': '私信消息', 'im-conversation': '会话列表',
+        'captcha-decision': '验证码决策', 'captcha-send-code': '发送验证码',
+        'captcha-validate': '校验验证码'
       };
       const kindLabel = KIND_LABELS[c.kind] || c.kind;
       const phaseLabel = c.phase === 'more' ? '翻页' : (c.phase === 'initial' ? '首页' : c.phase);
@@ -246,7 +253,10 @@
     try {
       const data = await chrome.runtime.sendMessage({ type: 'DY_NET_GET' });
       const caps = (data.captures || []).filter((c) =>
-        ['comment', 'reply', 'notice-list', 'notice-count', 'im-message', 'im-conversation'].indexOf(c.kind) >= 0);
+        ['comment', 'reply', 'comment-publish', 'comment-delete', 'comment-other',
+         'notice-list', 'notice-count', 'im-message', 'im-conversation',
+         'captcha-decision', 'captcha-send-code', 'captcha-validate',
+         'nav-jump'].indexOf(c.kind) >= 0);
       if (!caps.length) {
         setNetStatus('暂无评论/回复响应可导出', true);
         return;
@@ -256,6 +266,8 @@
         try { parsed = JSON.parse(c.body); } catch (_) { parsed = c.body; }
         return {
           ts: c.ts, kind: c.kind, phase: c.phase, cursor: c.cursor,
+          method: c.method || 'GET', status: c.status || 0,
+          reqBody: c.reqBody || '',
           notice: !!c.notice, insertIds: c.insertIds || '',
           noticeGroup: c.noticeGroup || '',
           maxTime: c.maxTime || '', minTime: c.minTime || '',

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>抖音楼层对话可视化</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #fff; --ink: #1f2937; --muted: #6b7280;
+    --line: #e5e7eb; --me: #2563eb; --me-bg: #eff6ff;
+    --host: #dc2626; --host-bg: #fef2f2; --other-bg: #f9fafb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .app { max-width: 980px; margin: 0 auto; padding: 20px; }
+  header h1 { font-size: 20px; margin: 0 0 8px; }
+  .stats { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .stats b { color: var(--ink); }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; margin-bottom: 16px; position: sticky; top: 0; z-index: 5; }
+  .toolbar input[type=text] { flex: 1; min-width: 220px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
+  .toolbar input[type=file] { font-size: 12px; max-width: 260px; }
+  button { padding: 8px 12px; border: 1px solid var(--line); background: #fff;
+    border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #f3f4f6; }
+  .hint { font-size: 12px; color: var(--muted); width: 100%; }
+  .hidden-note { font-size: 12px; color: var(--host); }
+  .picker { position: relative; }
+  .picker-panel { display: none; position: absolute; top: 40px; left: 0; z-index: 10;
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.12); min-width: 220px; max-height: 340px; overflow: auto; padding: 6px; }
+  .picker-panel.open { display: block; }
+  .picker-panel label { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+    border-radius: 5px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .picker-panel label:hover { background: #f3f4f6; }
+  .picker-panel .cnt { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .picker-legend { font-size: 10px; color: var(--muted); padding: 2px 8px 5px; }
+  .picker-panel .opt-line { border-bottom: 1px solid var(--line); margin-bottom: 4px; font-size: 12px; }
+  .picker-panel .last { font-size: 10px; padding: 0 4px; border-radius: 3px; }
+  .picker-panel .last.ta { background: #fef2f2; color: var(--host); }
+  .picker-panel .last.me { background: #eff6ff; color: var(--me); }
+  .picker-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; font-size: 12px; }
+  .picker-head button { padding: 2px 8px; font-size: 11px; }
+  .msg { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .msg.floor { border-left-color: var(--host); background: var(--host-bg); }
+  .msg.mine { border-left-color: var(--me); background: var(--me-bg); }
+  .msg-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; margin-bottom: 6px; }
+  .who { font-weight: 700; }
+  .floor .who { color: var(--host); }
+  .mine .who { color: var(--me); }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #eef2ff; color: #4338ca; }
+  .tag.to-me { background: #dbeafe; color: #1e40af; }
+  .time { color: var(--muted); font-size: 12px; }
+  .ip { color: var(--muted); font-size: 11px; background: #f3f4f6; padding: 1px 6px; border-radius: 4px; }
+  .idx { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .text { white-space: pre-wrap; line-height: 1.7; font-size: 14px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>抖音楼层对话可视化</h1>
+    <div class="stats" id="stats"></div>
+  </header>
+  <div class="toolbar">
+    <div class="picker">
+      <button type="button" id="pickerBtn">隐藏的人（0）▾</button>
+      <div class="picker-panel" id="pickerPanel"></div>
+    </div>
+    <button id="clear">清空</button>
+    <button id="hideMe">隐藏 [me] 的人</button>
+    <button id="export">导出当前显示</button>
+    <input type="file" id="file" accept=".json">
+    <div class="hint">点「隐藏的人」下拉勾选人名：选中某人 = 同时隐藏「我发给TA」和「TA发给我」的消息。默认内嵌最新导出数据；可点右侧按钮换其他 JSON。</div>
+    <div class="hidden-note" id="hiddenNote"></div>
+  </div>
+  <main id="list"></main>
+</div>
+
+<script id="embedded" type="application/json">{"desc": {"floor": "楼层主评论（层主）", "floor.author": "层主昵称", "floor.time": "评论时间与 IP 属地（页面展示文本）", "floor.text": "层主正文，多段落以换行分隔", "replies": "该楼层下已展开的回复列表，按面板展示顺序", "replies[].author": "回复者昵称", "replies[].replyTo": "被回复者昵称；为空字符串表示直接回复 floor（层主）", "replies[].time": "回复时间与 IP 属地（页面展示文本）", "replies[].text": "回复正文，多段落以换行分隔"}, "floor": {"author": "小绵羊🐑", "time": "23小时前 · 广东", "text": "不结婚不生娃还幸福的大有人在。这里的问题只有一个，他俩不合适。\n一个喜欢控制对方，一个不想被控制，无解。"}, "replies": [{"author": "二兴安岭", "replyTo": "", "time": "39分钟前 · 江西", "text": "原来我们每个人，既是存在的谜题，也是这个谜题的答案。我们繁衍不息，彼此相爱，然后我们这一个个字，就变成了一个又一个的句子，这首诗就能一直写下去。当这首诗写得足够长，总有一天，我们可以在这首宇宙之诗里，读懂我们存在的意义，繁衍本来不是病，是基因的一种选择，正如象牙塔里面的小白鼠一样，当他们接受了象牙塔的规则：权力决定配偶，无权鼠舔毛老去。\n国人在接受现有的规则下追寻意义，规则内的角色本就是cosplay，繁衍也不是一个固定程序，只是寻找答案时候的一个体验环节，何须事事坚壁清野"}, {"author": "猪蹄儿", "replyTo": "", "time": "23小时前 · 河南", "text": "没有，丁克就不可能幸福，除非两人都不能生"}, {"author": "小绵羊🐑", "replyTo": "猪蹄儿", "time": "21小时前 · 广东", "text": "不可能的依据是什么？我依据的是响应式性欲和自我决定三大需求。\n没有依据的谁都能说，我也说女人不可能真的爱男人，我瞎说的。"}, {"author": "小绵羊🐑", "replyTo": "", "time": "21小时前 · 广东", "text": "你说的本质上也是一种妥协，因为沟通的本质就是妥协，两个人互相表达自己的需求，需求上产生冲突，那总有一个人要放下自己的需求，这就是妥协。只是有了孩子之后，这个妥协对自我安慰的力度会更加大而已。\n但是我想说的是，如果两个人本来就非常的幸福，是不需要这种妥协的优化的，只不过你说的对，不适用他们，所以我一开始就说了，他俩不是有没有孩子的问题，是本来就不合适。"}, {"author": "头号玩家", "replyTo": "", "time": "20小时前 · 辽宁", "text": "我反复琢磨了这句大有人在，发现我身边的老人都不是大部分人，我的问题，我不够坚定[拜拜]"}, {"author": "皇甫臣", "replyTo": "小绵羊🐑", "time": "20小时前 · 上海", "text": "夫妻两个一辈子恩爱 从来没想过掐死对方的 一万对里面有多少对？"}, {"author": "小绵羊🐑", "replyTo": "头号玩家", "time": "20小时前 · 广东", "text": "我身边有个朋友孩子孤独症，她有几个病友群，就一个城市1000多个病友夫妻。而且我自己是丁克成功的，我身边也有丁克，所以大有人在的定义是我身边就有好几对，当然其实还是极少数的，但是，孤独症，智力残疾是真的非常多。万一自己的孩子中了，那就是灾难。"}, {"author": "小绵羊🐑", "replyTo": "皇甫臣", "time": "20小时前 · 广东", "text": "这个没法统计的，但是根据经验基本是99%都是互相掐死对方的。\n主要是看夫妻双方有多遵守自我决定理论和响应式性欲。\n但凡学过而且遵守而且丁克的，都能恩爱很久。"}, {"author": "小绵羊🐑", "replyTo": "", "time": "19小时前 · 广东", "text": "统一回复，基于理论和实践回答的"}, {"author": "小绵羊🐑", "replyTo": "皇甫臣", "time": "19小时前 · 广东", "text": "掐死对方的想法，我猜是来源于\"你怎么听不懂？\"和\"我怎么说了你也不听？\"\n这个方面涉及到沟通的本质，沟通是双方表达自己想法的行为，但它不代表想法可以统一。\n比如我不喜欢吃辣，你喜欢吃辣，我们各自表达了，\n我就说\"我都跟你说了我不吃辣，你听不懂吗？\"\n你也可以回一句，\"我都跟你说了，我一定要吃辣，你怎么就听不进去？\"\n也就是说掐死对方的核心感受是就是他为什么没有按照我的想法来做？或者是为什么我的感觉和想法他不重视？\n那根据亲密关系里感知伴侣回应性的研究，一个人要在爱情里感觉到自己被认同，被看见，被渴望，还有吸引力，这才是热恋。\n而在这里就缺失了被看见，被认同，从而也影响了吸引力。\n在这种关系下还能维持的爱情是基于以往对爱情的期待，还有幸福感的回忆。\n所以我跟我妻子一方面非常的幸运，我们没有太多观念上的矛盾，第二方面是我愿意妥协，因为我知道一旦我不妥协的话，会违反她爱情需求里的期待。\n我如果妥协了，我会解释成我选择爱她，她会感觉到被我认同，被我理解，被我爱着，他就会触发响应式性欲，于是我们就能一直热恋。\n当然，这只是我跟我妻子一个极其幸运的个例，不代表所有人。"}, {"author": "头号玩家", "replyTo": "小绵羊🐑", "time": "18小时前 · 辽宁", "text": "现状不代表一切，看看周围的老人才是时间洗礼的结果，我更宁可相信单身能长久，周围老人例子多，丁克属于家庭缺角，在阿德勒心理学里时间久了家庭其他角色会自动补充缺角补分，说句不好听的，十年八年后好人也会变得不正常。但那是个人的选择，但千万别把自己的不常规的想法让别人理解，尤其在十年之后，在正常人看来，这是一个精神病企图把他变成另一个精神病，可以可怜丁克，但不必当成普世价值，那太可怕了。"}, {"author": "小绵羊🐑", "replyTo": "头号玩家", "time": "17小时前 · 广东", "text": "在心理学里，当一个人对与自己无关的他人生活方式产生强烈的恐惧（比如十年后变精神病），并伴随被迫害妄想（比如企图把他变成精神病）时，往往是因为对方的选择触发了他自己内心的某种焦虑或防御机制。\n丁克不需要成为普世价值，生孩子也不需要。真正的普世价值是课题分离：我尊重你儿孙绕膝的选择，也请你尊重我自我实现的选择。\n别用伪科学的缺角论来掩饰对不同生活方式的恐惧。\n 其实你真正的问题在于，看到有人因为丁克过得很幸福，你反而不舒服，所以非要在逻辑上论证他们未来一定会惨，才能缓解你的认知失调。\n但我跟我媳妇因为丁克非常幸福，这是确凿的真实感受。心理学的第一原则（现象学原则）就是：永远不要用你的理论去否定别人当下的真实主观体验。\n你选择用“我们以后一定不幸福”来推演，我不干预；\n你不愿意相信我们现在的幸福，那就别信。\n毕竟，怎么想是你的自由，怎么活是我的课题。"}, {"author": "头号玩家", "replyTo": "小绵羊🐑", "time": "16小时前 · 辽宁", "text": "没人劝你，你丁克你的，我一直反对的是非正常生活的人去劝别人也不正常，是你在反对正常人的生活来证明自己是对的，劝人变不正常能是个好人？你的心理学理论是基于哪个学派？成体系么？你幸福你的，凡是利于你的你大可以随便说，但是别影响别人，你们在自己那个圈子好好同病相怜就好。"}, {"author": "小绵羊🐑", "replyTo": "头号玩家", "time": "15小时前 · 广东", "text": "上面你用伪科学装懂被我拆穿，现在理屈词穷开始查户口了？\n讲不过道理就开始撒泼，看来你是真破防了。\n 你非要脑补我在“反对正常人”、“劝人不正常”，这在心理学上叫被迫害妄想症。\n我从头到尾只陈述了一个事实：我是一个40岁的丁克中年男人，和妻子结婚7年一直热恋，我们非常幸福。\n如果你觉得这也叫同病相怜，那这不过是你为了维持自己的心理平衡，强行把别人的幸福扭曲成病。\n你这不正是典型的“看不惯别人好，非要别人按你的剧本活”吗？\n 我从头到尾没评价过你的生活，但你这见不得别人好的心态，你会一直破防的。\n 如果你还想继续发泄这种无聊的情绪，请便，我会继续拆解你。\n毕竟，你也不过是一个用来展示认知狭隘的鲜活个案。"}, {"author": "小绵羊🐑", "replyTo": "头号玩家", "time": "15小时前 · 广东", "text": "另外，我平时和别人交流，习惯先分析对方是在讲道理，还是在纯发泄情绪。\n人在纯发泄情绪、破防的时候，大脑资源会高度集中在“战斗或逃跑”的应激反应上（心理学叫杏仁核劫持）；\n而严谨的逻辑讨论需要调用前额叶皮层，破防的人前额叶基本是离线的，根本无法保持理性。\n\n 所以我能很敏锐地分辨出，你到底是在口不择言地贴标签、做宣告式的道德审判，还是在有理有据地跟我理性讨论。\n 很遗憾，你的前额叶已经下线了，你只是单纯地难受了。"}, {"author": "小绵羊🐑", "replyTo": "", "time": "14小时前 · 广东", "text": "我原话“一个喜欢控制对方，一个不想被控制，无解。他俩不是有没有孩子的问题，是本来就不合适。”\n我判断“不合适”的依据很明确：一方要控制，另一方拒绝被控制，核心需求冲突。\n你说的【你不能因为人家因为孩子妥协了，就说人家“本来就不合适”。】\n这个因果推理是你替我编出来的，不是我说的。这属于典型的稻草人谬误。\n\n我说的是沟通的本质是妥协,这是描述沟通。\n其次是我说\"如果两个人本来就非常幸福，是不需要这种妥协的优化的。\",\n你直接扩大为【“不妥协”当成幸福的唯一标准。】\n你说的【现实婚姻哪有那么多“天生合适”？再幸福的夫妻也需要妥协。】\n我想说的是“两个人存在难以调和的核心冲突”与“夫妻无需磨合、天生完全契合”，不是一回事。你在偷换概念。\n把“合适＝核心关系模式能够共存”，偷换成“合适＝永远没有冲突、永远不用妥协”。\n\n最无语的是，你说“没有一辈子一直幸福的两个人”：全称断言，个人经历证明不了。\n你以偏概全地用了父母的经历证明没有一辈子一直幸福的两个人。\n吵架、妥协不必然代表婚姻不幸福。\n但证明不了世界上所有夫妻都不可能一直幸福。"}, {"author": "小绵羊🐑", "replyTo": "", "time": "14小时前 · 广东", "text": "而且非常幸福也不等于一辈子从未吵架、每个瞬间都幸福。\n你先提高了幸福的证明门槛，再宣布没人能达到，意义不大。\n\n你说“这叫成熟，不叫自我安慰”，这是只换标签，没有反驳点。\n问题在于，“成熟”与“自我安慰”并不互斥。一个人完全可能同时：出于责任和爱主动让步；用孩子、家庭等意义来解释和安慰自己的让步。\n\n最后你说的“极其理想化的傲慢”，你这不是论证，是定性压人。你是在评价我的动机和人格，却没有增加任何证据。它\n的作用是把我放在道德低位，让你觉得你不只是更讲道理，还更成熟、更现实。\n\n你的言语漏洞百出，喜欢脑补，没有任何依据，纯粹的贴标签+换定义+定性压人。\n但是我从头到尾只想说一句，我和我妻子丁克7年非常幸福。"}, {"author": "Mr.欧", "replyTo": "", "time": "12小时前 · 广东", "text": "你说的不结婚没孩子幸福的，全踏马年轻的[捂脸]我31了，没见过一队不结婚没孩子有五十以上的，光棍有妇女有，人家可不幸福"}, {"author": "心上欢", "replyTo": "", "time": "11小时前 · 山西", "text": "你现在是这样的状态吗，还是身边有30没生娃婚后生活很幸福美满的"}, {"author": "蜂飞天下", "replyTo": "", "time": "9小时前 · 安徽", "text": "不结婚不生娃活着已经没意义了！生物生存的意义就是繁衍和传承！"}, {"author": "倾城殇【DMZ·战区】", "replyTo": "小绵羊🐑", "time": "9小时前 · 浙江", "text": "没见过任何一个40岁没孩子的婚姻[捂脸]"}, {"author": "🌈七心海ii", "replyTo": "小绵羊🐑", "time": "8小时前 · 山东", "text": "带着结果看答案[你不大行]"}, {"author": "🌈七心海ii", "replyTo": "小绵羊🐑", "time": "8小时前 · 山东", "text": "你多大了？"}, {"author": "潠頧", "replyTo": "小绵羊🐑", "time": "8小时前 · 广东", "text": "年龄没到而已，丁克夫妻就不可能长久"}, {"author": "定制好心情", "replyTo": "", "time": "8小时前 · 安徽", "text": "请把大有人在举例，你身边的已经过60岁了。不孕不育的除外啊，那是没办法"}, {"author": "黑眼熊", "replyTo": "", "time": "7小时前 · 陕西", "text": "目前我一个都没有看到"}, {"author": "小绵羊🐑", "replyTo": "🌈七心海ii", "time": "6小时前 · 广东", "text": "40"}, {"author": "财神爷的小宝贝✨️", "replyTo": "", "time": "5小时前 · 山东", "text": "你这个问题问问40的吧，丁克的多少是生不了才不要了，但凡能要的，最后都生了，半路上想要的那太多了，最后离婚的不多吗"}, {"author": "小绵羊🐑", "replyTo": "财神爷的小宝贝✨️", "time": "5小时前 · 广东", "text": "挺有意思的，很多人反对我，首先指出你们的逻辑谬误：\n以偏概全、诉诸常见/正常、移动举证门槛、人身攻击、稻草人、未来预言不可证、把“少数”等同“不存在/不正常”。\n其次我说我40岁丁克7年非常幸福，这是我的主观真实感受。你可以不相信，但不相信本身不能否定我的感受。\n那我说我身边有不少案例，你们也可以不信。\n长期稳定的丁克夫妻公开报道里并不少，比如刘青云和郭蔼明、梁朝伟、李健、欧阳震华夫妇等，还有外国的Seth Rogen。\n但是我感觉回复这些没有用。\n一旦我把这些名字抛出来，你们会立刻切换话术，比如\n“人家有钱有资源，普通人能比吗？”\n或“你怎么知道他们不是生不了？你怎么知道他们私下真的幸福？”。\n我猜你们要的不是证据，而是丁克必须不幸福的结论。\n现在的情况是我被塞了自证陷阱+移动球门，\n所以当前我不需要无限自证，因为是部分人先断言丁克就不可能幸福。\n这是一个全称否定命题，只要世界上存在哪怕几对幸福到老的丁克，部分人的命题就崩塌了。\n我承认我说大有人在是用词不当，丁克确实少数。\n大家各过各的日子，祝各位生娃的儿孙满堂，祝丁克的自在逍遥，不再一一回复了。"}, {"author": "小绵羊🐑", "replyTo": "心上欢", "time": "5小时前 · 广东", "text": "挺有意思的，很多人反对我，首先指出你们的逻辑谬误：\n以偏概全、诉诸常见/正常、移动举证门槛、人身攻击、稻草人、未来预言不可证、把“少数”等同“不存在/不正常”。\n其次我说我40岁丁克7年非常幸福，这是我的主观真实感受。你可以不相信，但不相信本身不能否定我的感受。\n那我说我身边有不少案例，你们也可以不信。\n长期稳定的丁克夫妻公开报道里并不少，比如刘青云和郭蔼明、梁朝伟、李健、欧阳震华夫妇等，还有外国的Seth Rogen。\n但是我感觉回复这些没有用。\n一旦我把这些名字抛出来，你们会立刻切换话术，比如\n“人家有钱有资源，普通人能比吗？”\n或“你怎么知道他们不是生不了？你怎么知道他们私下真的幸福？”。\n我猜你们要的不是证据，而是丁克必须不幸福的结论。\n现在的情况是我被塞了自证陷阱+移动球门，\n所以当前我不需要无限自证，因为是部分人先断言丁克就不可能幸福。\n这是一个全称否定命题，只要世界上存在哪怕几对幸福到老的丁克，部分人的命题就崩塌了。\n我承认我说大有人在是用词不当，丁克确实少数。\n大家各过各的日子，祝各位生娃的儿孙满堂，祝丁克的自在逍遥，不再一一回复了。"}, {"author": "小绵羊🐑", "replyTo": "定制好心情", "time": "5小时前 · 广东", "text": "挺有意思的，很多人反对我，首先指出你们的逻辑谬误：\n以偏概全、诉诸常见/正常、移动举证门槛、人身攻击、稻草人、未来预言不可证、把“少数”等同“不存在/不正常”。\n其次我说我40岁丁克7年非常幸福，这是我的主观真实感受。你可以不相信，但不相信本身不能否定我的感受。\n那我说我身边有不少案例，你们也可以不信。\n长期稳定的丁克夫妻公开报道里并不少，比如刘青云和郭蔼明、梁朝伟、李健、欧阳震华夫妇等，还有外国的Seth Rogen。\n但是我感觉回复这些没有用。\n一旦我把这些名字抛出来，你们会立刻切换话术，比如\n“人家有钱有资源，普通人能比吗？”\n或“你怎么知道他们不是生不了？你怎么知道他们私下真的幸福？”。\n我猜你们要的不是证据，而是丁克必须不幸福的结论。\n现在的情况是我被塞了自证陷阱+移动球门，\n所以当前我不需要无限自证，因为是部分人先断言丁克就不可能幸福。\n这是一个全称否定命题，只要世界上存在哪怕几对幸福到老的丁克，部分人的命题就崩塌了。\n我承认我说大有人在是用词不当，丁克确实少数。\n大家各过各的日子，祝各位生娃的儿孙满堂，祝丁克的自在逍遥，不再一一回复了。"}, {"author": "小绵羊🐑", "replyTo": "🌈七心海ii", "time": "5小时前 · 广东", "text": "挺有意思的，很多人反对我，首先指出你们的逻辑谬误：\n以偏概全、诉诸常见/正常、移动举证门槛、人身攻击、稻草人、未来预言不可证、把“少数”等同“不存在/不正常”。\n其次我说我40岁丁克7年非常幸福，这是我的主观真实感受。你可以不相信，但不相信本身不能否定我的感受。\n那我说我身边有不少案例，你们也可以不信。\n长期稳定的丁克夫妻公开报道里并不少，比如刘青云和郭蔼明、梁朝伟、李健、欧阳震华夫妇等，还有外国的Seth Rogen。\n但是我感觉回复这些没有用。\n一旦我把这些名字抛出来，你们会立刻切换话术，比如\n“人家有钱有资源，普通人能比吗？”\n或“你怎么知道他们不是生不了？你怎么知道他们私下真的幸福？”。\n我猜你们要的不是证据，而是丁克必须不幸福的结论。\n现在的情况是我被塞了自证陷阱+移动球门，\n所以当前我不需要无限自证，因为是部分人先断言丁克就不可能幸福。\n这是一个全称否定命题，只要世界上存在哪怕几对幸福到老的丁克，部分人的命题就崩塌了。\n我承认我说大有人在是用词不当，丁克确实少数。\n大家各过各的日子，祝各位生娃的儿孙满堂，祝丁克的自在逍遥，不再一一回复了。"}, {"author": "無灬邪", "replyTo": "", "time": "4小时前 · 上海", "text": "大有人在，怎么得出这个结果的？"}, {"author": "派大星丶", "replyTo": "", "time": "4小时前 · 山东", "text": "确实大有人在，也就不到1%。[微笑]"}, {"author": "盼盼爸", "replyTo": "小绵羊🐑", "time": "3小时前 · 广西", "text": "这个就要提前规划了"}, {"author": "小绵羊🐑", "replyTo": "派大星丶", "time": "3小时前 · 广东", "text": "哈哈哈，是的，是我用词不当，确实是极少数。不过我自己丁克真的很幸福"}, {"author": "小绵羊🐑", "replyTo": "無灬邪", "time": "3小时前 · 广东", "text": "哈哈哈，是我用词不当，确实是极少数。不过我自己丁克真的很幸福"}, {"author": "小绵羊🐑", "replyTo": "黑眼熊", "time": "3小时前 · 广东", "text": "那就奇怪了，可能你平时不关心吧。刘青云，李健，周润发，欧阳震华都是丁克幸福的典范"}, {"author": "🌈七心海ii", "replyTo": "小绵羊🐑", "time": "3小时前 · 山东", "text": "结婚多长时间了？你能生么[看]"}, {"author": "小绵羊🐑", "replyTo": "🌈七心海ii", "time": "3小时前 · 广东", "text": "这个我就算说能，你也可以选择不信，哪怕我告诉你刘青云，李建，周润发，欧阳震华等都是直接说自己选择丁克，身体健康，也幸福的，你都可以选择不信。但是你不信本身不代表我的客观情况，而且你不信，直接别看我就行"}, {"author": "远的瞳", "replyTo": "小绵羊🐑", "time": "1小时前 · 河北", "text": "你不到死就不能说丁克成功。"}]}</script>
+<script>
+var DATA = JSON.parse(document.getElementById('embedded').textContent);
+var me = (DATA.floor && DATA.floor.author || '').trim();
+var hideSelfEmpty = true; // 过滤「我发给自己楼层、replyTo 为空」的空回复
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+// 把页面展示文本「23小时前 · 广东」拆成 time 与 ip 两个字段
+function splitTimeIp(s){
+  var raw = String(s==null?'':'').trim();
+  var m = raw.match(/^(.*?)\s*[·•]\s*(.+)$/);
+  if (m) return { time: m[1].trim(), ip: m[2].trim() };
+  return { time: raw, ip: '' };
+}
+
+function getHide(){
+  return Array.prototype.slice.call(document.querySelectorAll('#pickerPanel input[data-name]:checked'))
+    .map(function(cb){ return cb.getAttribute('data-name'); });
+}
+
+// 每个人最后一次互动是谁发的：me / ta
+function computeLast(){
+  var last = {};
+  (DATA.replies || []).forEach(function(r){
+    var a = (r.author||'').trim(), t = (r.replyTo||'').trim();
+    if (a && a !== me) last[a] = 'ta';
+    if (t && t !== me) last[t] = 'me';
+  });
+  return last;
+}
+
+function buildPicker(){
+  var counts = {};
+  (DATA.replies || []).forEach(function(r){
+    var a = (r.author||'').trim(), t = (r.replyTo||'').trim();
+    if (a && a !== me) counts[a] = (counts[a]||0) + 1;
+    if (t && t !== me) counts[t] = (counts[t]||0) + 1;
+  });
+  var last = computeLast();
+  var names = Object.keys(counts).sort();
+  var html = '<div class="picker-head"><label><input type="checkbox" id="pickAll"> 全选/全不选</label>' +
+    '<span>' + names.length + ' 人</span></div>';
+  html += '<div class="picker-legend">[ta] 对方最后发言 · [me] 我最后回复</div>';
+  html += '<label class="opt-line"><input type="checkbox" id="optSelfEmpty"' +
+    (hideSelfEmpty ? ' checked' : '') + '> 过滤我给自己的空回复（replyTo 为空且是我发的）</label>';
+  names.forEach(function(n){
+    var mark = last[n] === 'me'
+      ? '<span class="last me">[me]</span>'
+      : '<span class="last ta">[ta]</span>';
+    html += '<label><input type="checkbox" data-name="' + esc(n) + '"> ' + esc(n) +
+      ' ' + mark + ' <span class="cnt">' + counts[n] + '</span></label>';
+  });
+  document.getElementById('pickerPanel').innerHTML = html;
+  document.getElementById('pickerBtn').textContent = '隐藏的人（' + getHide().length + '）▾';
+}
+
+function togglePanel(force){
+  var p = document.getElementById('pickerPanel');
+  if (typeof force === 'boolean') p.classList.toggle('open', force);
+  else p.classList.toggle('open');
+}
+
+function render(){
+  var hide = getHide();
+  var all = DATA.replies || [];
+  var kept = all.filter(function(r){
+    var a = (r.author||'').trim(), t = (r.replyTo||'').trim();
+    if (hideSelfEmpty && a === me && t === '') return false; // 我发给自己楼层、无指向的空回复
+    return hide.indexOf(a) < 0 && hide.indexOf(t) < 0;
+  });
+  var hiddenCount = all.length - kept.length;
+
+  document.getElementById('stats').innerHTML =
+    '我：<b>' + esc(me) + '</b>　·　回复总数 <b>' + all.length + '</b>　·　显示 <b>' + kept.length +
+    '</b>　·　已隐藏 <b>' + hiddenCount + '</b>';
+  document.getElementById('hiddenNote').textContent = hide.length
+    ? '当前隐藏：' + hide.join('、') : '';
+  document.getElementById('pickerBtn').textContent = '隐藏的人（' + hide.length + '）▾';
+
+  var floor = DATA.floor || {};
+  var fi = splitTimeIp(floor.time);
+  var html = '<div class="msg floor" data-role="floor" data-author="' + esc(floor.author||'') +
+    '" data-time="' + esc(fi.time) + '" data-ip="' + esc(fi.ip) + '">' +
+    '<div class="msg-head">' +
+    '<span class="who">' + esc(floor.author||'') + '</span>' +
+    '<span class="tag">层主 / 我</span>' +
+    '<span class="time">' + esc(fi.time) + '</span>' +
+    (fi.ip ? '<span class="ip">' + esc(fi.ip) + '</span>' : '') + '</div>' +
+    '<div class="text">' + esc(floor.text||'') + '</div></div>';
+
+  if (!kept.length){
+    html += '<div class="empty">没有可显示的回复</div>';
+  } else {
+    kept.forEach(function(r, i){
+      var isMine = (r.author||'').trim() === me;
+      var to = (r.replyTo||'').trim();
+      var toMe = (to === '' || to === me);
+      var ri = splitTimeIp(r.time);
+      html += '<div class="msg' + (isMine?' mine':'') + '" data-role="reply" data-author="' + esc(r.author||'') +
+        '" data-replyto="' + esc(to) + '" data-time="' + esc(ri.time) + '" data-ip="' + esc(ri.ip) + '">' +
+        '<div class="msg-head">' +
+        '<span class="who">' + esc(r.author||'') + '</span>' +
+        (isMine ? '<span class="tag">我</span>' : '') +
+        '<span class="tag' + (toMe?' to-me':'') + '">' + (toMe ? '→ 层主/我' : '→ ' + esc(to)) + '</span>' +
+        '<span class="time">' + esc(ri.time) + '</span>' +
+        (ri.ip ? '<span class="ip">' + esc(ri.ip) + '</span>' : '') +
+        '<span class="idx">#' + String(i+1).padStart(2,'0') + '</span></div>' +
+        '<div class="text">' + esc(r.text||'') + '</div></div>';
+    });
+  }
+  document.getElementById('list').innerHTML = html;
+}
+
+// 从当前显示的 DOM 读出结构（过滤后的所见即所得）
+function readFromDom(){
+  var floorEl = document.querySelector('#list .msg[data-role="floor"]');
+  var floor = floorEl ? {
+    author: floorEl.getAttribute('data-author') || '',
+    time: floorEl.getAttribute('data-time') || '',
+    ip: floorEl.getAttribute('data-ip') || '',
+    text: floorEl.querySelector('.text') ? floorEl.querySelector('.text').textContent : ''
+  } : { author:'', time:'', ip:'', text:'' };
+  var replies = [];
+  Array.prototype.slice.call(document.querySelectorAll('#list .msg[data-role="reply"]')).forEach(function(el){
+    replies.push({
+      author: el.getAttribute('data-author') || '',
+      replyTo: el.getAttribute('data-replyto') || '',
+      time: el.getAttribute('data-time') || '',
+      ip: el.getAttribute('data-ip') || '',
+      text: el.querySelector('.text') ? el.querySelector('.text').textContent : ''
+    });
+  });
+  return { floor: floor, replies: replies };
+}
+
+function downloadFile(name, content, mime){
+  try {
+    var blob = new Blob([content], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    return true;
+  } catch(err){ return false; }
+}
+
+function doExport(){
+  var d = readFromDom();
+  var seed = (d.floor.author || '导出').replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 40);
+  var stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  var mi = d.floor.ip ? (d.floor.time + ' · ' + d.floor.ip) : d.floor.time;
+  var lines = ['【层主】' + d.floor.author + (mi ? '　' + mi : '') + (d.floor.text ? '\n' + d.floor.text : '')];
+  d.replies.forEach(function(r, i){
+    var rt = r.ip ? (r.time + ' · ' + r.ip) : r.time;
+    lines.push('【回复' + String(i+1).padStart(2,'0') + '】' + r.author +
+      (r.replyTo ? ' → ' + r.replyTo : '') + (rt ? '　' + rt : '') + (r.text ? '\n' + r.text : ''));
+  });
+  var payload = {
+    desc: {
+      floor: '楼层主评论（层主）',
+      'floor.author': '层主昵称',
+      'floor.time': '评论时间（已从展示文本拆出，不含 IP）',
+      'floor.ip': '评论 IP 属地',
+      'floor.text': '层主正文，多段落以换行分隔',
+      replies: '该楼层下当前显示的回复列表，按展示顺序',
+      'replies[].author': '回复者昵称',
+      'replies[].replyTo': '被回复者昵称；为空字符串表示直接回复 floor（层主）',
+      'replies[].time': '回复时间（已从展示文本拆出，不含 IP）',
+      'replies[].ip': '回复 IP 属地',
+      'replies[].text': '回复正文，多段落以换行分隔'
+    },
+    floor: d.floor,
+    replies: d.replies
+  };
+  var ok1 = downloadFile(seed + '_' + stamp + '.txt', lines.join('\n\n'), 'text/plain;charset=utf-8');
+  var ok2 = downloadFile(seed + '_' + stamp + '.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+  alert(ok1 && ok2 ? '已导出当前显示的 ' + d.replies.length + ' 条回复（txt + json）' : '导出失败');
+}
+
+document.getElementById('export').addEventListener('click', doExport);
+document.getElementById('pickerBtn').addEventListener('click', function(e){
+  e.stopPropagation(); togglePanel();
+});
+document.getElementById('pickerPanel').addEventListener('click', function(e){ e.stopPropagation(); });
+document.addEventListener('click', function(){ togglePanel(false); });
+document.getElementById('pickerPanel').addEventListener('change', function(e){
+  if (e.target.id === 'optSelfEmpty') {
+    hideSelfEmpty = e.target.checked;
+    render();
+    return;
+  }
+  if (e.target.id === 'pickAll') {
+    var on = e.target.checked;
+    Array.prototype.slice.call(document.querySelectorAll('#pickerPanel input[data-name]'))
+      .forEach(function(cb){ cb.checked = on; });
+  }
+  render();
+});
+document.getElementById('clear').addEventListener('click', function(){
+  Array.prototype.slice.call(document.querySelectorAll('#pickerPanel input[data-name], #pickAll'))
+    .forEach(function(cb){ cb.checked = false; });
+  render();
+});
+document.getElementById('hideMe').addEventListener('click', function(){
+  var last = computeLast();
+  Array.prototype.slice.call(document.querySelectorAll('#pickerPanel input[data-name]')).forEach(function(cb){
+    cb.checked = (last[cb.getAttribute('data-name')] === 'me');
+  });
+  var all = document.getElementById('pickAll');
+  if (all) all.checked = false;
+  render();
+});
+document.getElementById('file').addEventListener('change', function(e){
+  var f = e.target.files[0]; if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function(){
+    try {
+      DATA = JSON.parse(rd.result); me = (DATA.floor && DATA.floor.author || '').trim();
+      buildPicker(); render();
+    }
+    catch(err){ alert('JSON 解析失败：' + err.message); }
+  };
+  rd.readAsText(f, 'utf-8');
+});
+buildPicker();
+render();
+</script>
+</body>
+</html>

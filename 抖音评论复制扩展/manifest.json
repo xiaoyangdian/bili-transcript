@@ -12,13 +12,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.douyin.com/video/*"],
+      "matches": ["https://www.douyin.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["net-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
       "matches": ["https://www.douyin.com/video/*"],
-      "js": ["net-hook.js", "video-control.js"],
+      "js": ["video-control.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },

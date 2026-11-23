@@ -13,6 +13,8 @@
       const p = u.pathname.toLowerCase();
       if (/comment|reply/.test(p)) return true;
       if (/notice|notification/.test(p)) return true;
+      if (/passport\/(safe|web)\//.test(p)) return true;
+      if (/user\/profile\/self/.test(p)) return true;
       if (/imapi\.douyin\.com/.test(u.hostname) && /\/v1\/(message|stranger)\//.test(p)) return true;
       return false;
     } catch (_) {
@@ -40,9 +42,15 @@
 
     // 路径精确区分接口类型
     let kind;
-    if (/comment\/list\/reply/.test(p) || /reply/.test(p)) kind = 'reply';
+    if (/comment\/publish/.test(p)) kind = 'comment-publish';
+    else if (/comment\/delete/.test(p)) kind = 'comment-delete';
+    else if (/passport\/safe\/query_decision/.test(p)) kind = 'captcha-decision';
+    else if (/passport\/web\/send_code/.test(p)) kind = 'captcha-send-code';
+    else if (/passport\/web\/validate_code/.test(p)) kind = 'captcha-validate';
+    else if (/user\/profile\/self/.test(p)) kind = 'self-profile';
+    else if (/comment\/list\/reply/.test(p) || /reply/.test(p)) kind = 'reply';
     else if (/comment\/list/.test(p)) kind = 'comment';
-    else if (/comment/.test(p)) kind = 'comment';
+    else if (/comment/.test(p)) kind = 'comment-other';
     else if (/notice\/count/.test(p)) kind = 'notice-count';
     else if (/notice|notification/.test(p)) kind = 'notice-list';
     else if (/\/v1\/message\//.test(p)) kind = 'im-message';
@@ -60,7 +68,7 @@
     return { kind, phase, cursor, commentId, awemeId, notice, insertIds, maxTime, minTime, noticeGroup };
   }
 
-  function emit(url, method, status, body) {
+  function emit(url, method, status, body, reqBody) {
     if (!isTargetApi(url)) return;
     const meta = classify(url);
     try {
@@ -68,6 +76,7 @@
         __dyNetCapture: {
           url, method: method || 'GET', status: status || 0,
           body: typeof body === 'string' ? body : '',
+          reqBody: typeof reqBody === 'string' ? reqBody : '',
           ...meta
         }
       }, '*');
@@ -87,7 +96,9 @@
         promise.then(function (res) {
           if (!res || typeof res.clone !== 'function') return;
           res.clone().text().then(function (text) {
-            emit(url, method, res.status, text);
+            let rb = '';
+            if (init && init.body != null) rb = typeof init.body === 'string' ? init.body : '[object]';
+            emit(url, method, res.status, text, rb);
           }).catch(function () {});
         }).catch(function () {});
       } catch (_) {}
@@ -103,11 +114,12 @@
     this.__dyMethod = method;
     return origOpen.apply(this, arguments);
   };
-  XMLHttpRequest.prototype.send = function () {
+  XMLHttpRequest.prototype.send = function (body) {
     const self = this;
+    this.__dyBody = (body == null) ? '' : (typeof body === 'string' ? body : '[object]');
     this.addEventListener('load', function () {
       try {
-        emit(self.__dyUrl || '', self.__dyMethod || 'GET', self.status, self.responseText);
+        emit(self.__dyUrl || '', self.__dyMethod || 'GET', self.status, self.responseText, self.__dyBody);
       } catch (_) {}
     });
     return origSend.apply(this, arguments);
@@ -120,11 +132,18 @@
     const d = event.data;
     if (!d || !d.__dyNetFetchReq || !d.__dyNetFetchReq.url) return;
     const id = d.__dyNetFetchReq.id;
-    console.log('[dy-hook] REQ got', id, d.__dyNetFetchReq.url.slice(0, 220));
+    const opt = d.__dyNetFetchReq.options || {};
+    const method = (opt.method || 'GET').toUpperCase();
+    console.log('[dy-hook] REQ got', id, method, d.__dyNetFetchReq.url.slice(0, 220));
     try {
       const xhr = new XMLHttpRequest();
-      xhr.open('GET', d.__dyNetFetchReq.url, true);
+      xhr.open(method, d.__dyNetFetchReq.url, true);
       xhr.withCredentials = true;
+      if (opt.headers) {
+        Object.keys(opt.headers).forEach(function (k) {
+          try { xhr.setRequestHeader(k, opt.headers[k]); } catch (_) {}
+        });
+      }
       xhr.onload = function () {
         console.log('[dy-hook] RES', id, 'status=' + xhr.status, 'len=' + (xhr.responseText || '').length,
           'head=' + (xhr.responseText || '').slice(0, 200));
@@ -136,12 +155,64 @@
         console.log('[dy-hook] network error', id);
         window.postMessage({ __dyNetFetchRes: { id: id, ok: false, error: 'network' } }, '*');
       };
-      xhr.send();
+      xhr.send(opt.body != null ? opt.body : undefined);
     } catch (err) {
       console.log('[dy-hook] exception', id, String(err));
       window.postMessage({ __dyNetFetchRes: { id: id, ok: false, error: String(err) } }, '*');
     }
   });
+
+  // ---- 导航/跳转捕获：记录落地 URL、referrer、SPA 跳转，用来还原"原生怎么跳的" ----
+  function navEmit(to, via, from) {
+    try {
+      const abs = new URL(to, location.href).href;
+      const payload = {
+        ts: Date.now(),
+        to: abs,
+        from: from || '',
+        referrer: document.referrer || '',
+        via: via || ''
+      };
+      window.postMessage({
+        __dyNetCapture: {
+          url: abs, method: 'NAV', status: 0,
+          kind: 'nav-jump', phase: via || 'load',
+          body: JSON.stringify(payload), reqBody: ''
+        }
+      }, '*');
+    } catch (_) {}
+  }
+
+  // 落地即记一次（覆盖整页跳转/新标签打开）
+  try { navEmit(location.href, 'enter', document.referrer || ''); } catch (_) {}
+
+  // SPA 路由跳转：pushState / replaceState
+  ['pushState', 'replaceState'].forEach(function (fn) {
+    const orig = history[fn];
+    if (typeof orig !== 'function') return;
+    history[fn] = function () {
+      const prev = location.href;
+      const state = arguments[0];
+      const title = arguments[1];
+      const url = arguments[2];
+      const ret = orig.apply(this, arguments);
+      try { navEmit(url || location.href, fn, prev); } catch (_) {}
+      void state; void title;
+      return ret;
+    };
+  });
+  window.addEventListener('popstate', function () {
+    try { navEmit(location.href, 'popstate', ''); } catch (_) {}
+  });
+
+  // window.open：记录目标 URL（新标签跳转）
+  const origOpenWin = window.open;
+  if (typeof origOpenWin === 'function') {
+    window.open = function (url) {
+      try { navEmit(url || '', 'window.open', location.href); } catch (_) {}
+      return origOpenWin.apply(this, arguments);
+    };
+  }
 
   void CHANNEL;
 })();
