@@ -2,41 +2,112 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>抖音评论复制</title>
+  <title>抖音评论复制 / 抓包</title>
   <style>
     :root { color-scheme: light; }
     * { box-sizing: border-box; }
     body {
-      width: 280px;
+      width: 460px;
       margin: 0;
-      padding: 16px;
       font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #1f1f25;
       background: #fff;
-    }
-    h1 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
-    .hint { margin: 0 0 14px; font-size: 12px; color: #6b6b75; line-height: 1.6; }
-    button {
-      width: 100%;
-      padding: 9px;
-      border: 1px solid #fe2c55;
-      border-radius: 8px;
-      background: #fe2c55;
-      color: #fff;
       font-size: 13px;
-      cursor: pointer;
+    }
+    header {
+      padding: 12px 14px 0;
+      border-bottom: 1px solid #eee;
+    }
+    h1 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+    .tabs { display: flex; gap: 4px; }
+    .tab {
+      padding: 7px 12px; border: none; background: transparent; cursor: pointer;
+      font-size: 13px; color: #777; border-bottom: 2px solid transparent;
+    }
+    .tab.active { color: #fe2c55; border-bottom-color: #fe2c55; font-weight: 600; }
+    .panel { padding: 14px; }
+    .panel[hidden] { display: none; }
+    .hint { margin: 0 0 12px; font-size: 12px; color: #6b6b75; line-height: 1.6; }
+    button {
+      padding: 8px 12px; border: 1px solid #fe2c55; border-radius: 8px;
+      background: #fe2c55; color: #fff; font-size: 12px; cursor: pointer;
     }
     button:hover { background: #e8264c; }
     button:disabled { opacity: .6; cursor: default; }
-    .status { margin-top: 10px; min-height: 16px; font-size: 12px; color: #3a8a54; line-height: 1.5; }
+    button.ghost { background: #fff; color: #fe2c55; }
+    button.ghost:hover { background: #fff0f3; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .status { min-height: 16px; font-size: 12px; color: #3a8a54; }
     .status.error { color: #d83b4b; }
+    .sub { font-size: 12px; font-weight: 600; margin: 12px 0 6px; color: #444; }
+    .list { max-height: 300px; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+    .item { padding: 8px 10px; border-bottom: 1px solid #f2f2f2; }
+    .item:last-child { border-bottom: none; }
+    .item.hit { background: #fff6f8; }
+    .tag {
+      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+      margin-right: 6px; background: #f0f0f3; color: #666;
+    }
+    .tag.reply { background: #fe2c55; color: #fff; }
+    .tag.comment { background: #2b7de9; color: #fff; }
+    .tag.initial { background: #e8f6ec; color: #2b8a4b; }
+    .tag.more { background: #fff2e0; color: #c47a13; }
+    .path { word-break: break-all; font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+    .meta { font-size: 11px; color: #999; margin-top: 3px; }
+    .cnt { float: right; color: #c47a13; font-weight: 600; }
+    .sample { color: #999; word-break: break-all; font-size: 11px; }
+    .empty { padding: 16px; color: #999; text-align: center; }
+    details.body { margin-top: 4px; }
+    details.body summary { cursor: pointer; color: #2b7de9; font-size: 11px; }
+    pre {
+      margin: 6px 0 0; max-height: 180px; overflow: auto; background: #f7f7f9;
+      padding: 8px; border-radius: 6px; font-size: 11px; word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .filtered { opacity: .55; }
   </style>
 </head>
 <body>
-  <h1>抖音评论复制</h1>
-  <p class="hint">每条评论旁有一个红色「复制」按钮：<br>点主评论会先自动点掉「展开N条回复」加载完整楼层，再复制整楼；点回复只复制该条。</p>
-  <button id="refresh">重新注入复制按钮</button>
-  <div id="status" class="status"></div>
+  <header>
+    <h1>抖音评论复制 / 抓包</h1>
+    <div class="tabs">
+      <button class="tab active" data-panel="copy">复制工具</button>
+      <button class="tab" data-panel="net">网络抓包</button>
+    </div>
+  </header>
+
+  <section class="panel" id="panel-copy">
+    <p class="hint">每条评论旁有一个红色「复制」按钮：<br>点主评论会先自动点掉「展开N条回复」加载完整楼层，再复制整楼；点回复只复制该条。</p>
+    <div class="row">
+      <button id="openPanel">打开评论 / 通知面板</button>
+      <button id="refresh">重新注入复制按钮</button>
+      <button id="videoToggle" class="ghost">暂停视频</button>
+    </div>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section class="panel" id="panel-net" hidden>
+    <p class="hint">
+      自动记录抖音页面的 XHR/fetch 请求。<b>同一接口请求超过 5 次即视为高频、不再记录</b>，
+      以过滤轮询/埋点。请求按「域名+路径」归并，去掉每次都变的签名参数。
+      先刷新页面并滚动评论区，再点「刷新列表」。
+    </p>
+    <div class="row">
+      <button id="netRefresh" class="ghost">刷新列表</button>
+      <button id="netToggle" class="ghost">暂停抓包</button>
+      <button id="netClear" class="ghost">清空</button>
+      <button id="netExport" class="ghost">导出 URL</button>
+      <button id="netExportBody" class="ghost">导出响应 JSON</button>
+    </div>
+    <div id="netStatus" class="status"></div>
+
+    <div class="sub">① 低频 URL 列表（高亮=疑似回复接口）</div>
+    <div id="urlList" class="list"></div>
+
+    <div class="sub">② 精确捕获（评论 / 回复 × 初始 / 展开更多）</div>
+    <div id="captureList" class="list"></div>
+  </section>
+
   <script src="popup.js"></script>
 </body>
 </html>

@@ -388,6 +388,34 @@
       sendResponse({ ok: true, count: injectAll() });
       return false;
     }
+    if (request.type === 'DY_VIDEO_SET') {
+      try {
+        window.postMessage({ __dyVideoSet: !!request.pause }, '*');
+      } catch (_) {}
+      sendResponse({ ok: true, pause: !!request.pause });
+      return false;
+    }
+    if (request.type === 'DY_VIDEO_GET') {
+      let paused = true;
+      try {
+        const saved = localStorage.getItem('__dyVideoPaused');
+        if (saved !== null) paused = saved === '1';
+      } catch (_) {}
+      sendResponse({ ok: true, pause: paused });
+      return false;
+    }
     return false;
+  });
+
+  // 接收 MAIN world 网络钩子的捕获数据，转发给后台 worker 存储
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || !data.__dyNetCapture) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'DY_NET_CAPTURE', payload: data.__dyNetCapture }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (_) {}
   });
 })();

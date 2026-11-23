@@ -1,0 +1,68 @@
+/* ============================================================
+ * 抖音评论区美化（注入样式）
+ * 仅调整排版与视觉层次，不 display:none / 不移除任何节点，
+ * 避免影响 content.js 的正文抓取与「展开更多回复」逻辑。
+ * ============================================================ */
+
+/* 1. 每条评论/回复：拉开间距 + 细分隔线 */
+[data-e2e="comment-item"] {
+  margin-top: 0 !important;
+  padding: 16px 0 14px !important;
+  border-bottom: 1px solid rgba(128, 128, 140, .16) !important;
+}
+[data-e2e="comment-item"]:last-child {
+  border-bottom: none !important;
+}
+
+/* 2. 头像：略微放大，评论更有呼吸感 */
+[data-e2e="comment-item"] [data-e2e="live-avatar"] {
+  width: 36px !important;
+  height: 36px !important;
+}
+[data-e2e="comment-item"] [data-e2e="live-avatar"] img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+
+/* 3. 正文：加大字号与行距，长评论不再挤成一团 */
+[data-e2e="comment-item"] .FduGc_lz,
+[data-e2e="comment-item"] .FduGc_lz .Sh1Da424,
+[data-e2e="comment-item"] .FduGc_lz .Sh1Da424 span,
+[data-e2e="comment-item"] .FduGc_lz .Sh1Da424 .m53pwJvW {
+  font-size: 15px !important;
+  line-height: 1.8 !important;
+  letter-spacing: .2px;
+}
+
+/* 4. 昵称：加粗突出，区分于正文 */
+[data-e2e="comment-item"] [data-click-from="title"] .meTuPoyz span {
+  font-weight: 600 !important;
+  font-size: 14px !important;
+}
+
+/* 5. 时间/地区：与正文拉开一点距离 */
+[data-e2e="comment-item"] .VAQA49VP {
+  margin-top: 6px !important;
+  letter-spacing: .2px;
+}
+
+/* 6. 回复区：缩进 + 左侧竖线 + 极淡背景，形成清晰层级 */
+[class*="replyContainer"] {
+  margin: 10px 0 0 12px !important;
+  padding: 4px 0 2px 14px !important;
+  border-left: 2px solid rgba(254, 44, 85, .4) !important;
+  background: linear-gradient(90deg, rgba(254, 44, 85, .04), transparent 60%) !important;
+  border-radius: 0 8px 8px 0 !important;
+}
+
+/* 7. 操作栏（点赞/回复/分享）：与正文拉开间距 */
+[data-e2e="comment-item"] [class*="comment-item-stats-container"] {
+  margin-top: 10px !important;
+}
+
+/* 8. 展开更多回复按钮：上下留白，避免紧贴回复 */
+[class*="replyContainer"] > button {
+  margin-top: 12px !important;
+  margin-bottom: 6px !important;
+}
