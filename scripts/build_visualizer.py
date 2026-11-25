@@ -61,6 +61,8 @@ HTML = r'''<!DOCTYPE html>
   button:hover { background: #f3f4f6; }
   .hint { font-size: 12px; color: var(--muted); width: 100%; }
   .hidden-note { font-size: 12px; color: var(--host); }
+  .load-note { font-size: 12px; color: #047857; width: 100%; }
+  .load-note button { padding: 2px 8px; font-size: 11px; margin-left: 6px; }
   .picker { position: relative; }
   .picker-panel { display: none; position: absolute; top: 40px; left: 0; z-index: 10;
     background: #fff; border: 1px solid var(--line); border-radius: 8px;
@@ -110,7 +112,9 @@ HTML = r'''<!DOCTYPE html>
     <button id="hideMe">隐藏 [me] 的人</button>
     <button id="export">导出当前显示</button>
     <input type="file" id="file" accept=".json">
-    <div class="hint">点「隐藏的人」下拉勾选人名：选中某人 = 同时隐藏「我发给TA」和「TA发给我」的消息。默认内嵌最新导出数据；可点右侧按钮换其他 JSON。</div>
+    <button id="saveHtml">保存为新 HTML</button>
+    <div class="hint">点「隐藏的人」下拉勾选人名：选中某人 = 同时隐藏「我发给TA」和「TA发给我」的消息。选择 JSON 文件后自动解析并显示；刷新会恢复内嵌数据，点「保存为新 HTML」可固化。</div>
+    <div class="load-note" id="loadNote"></div>
     <div class="hidden-note" id="hiddenNote"></div>
   </div>
   <main id="list"></main>
@@ -331,13 +335,35 @@ document.getElementById('hideMe').addEventListener('click', function(){
   if (all) all.checked = false;
   render();
 });
+function saveAsHtml(){
+  var list = document.getElementById('list');
+  var panel = document.getElementById('pickerPanel');
+  var oldList = list.innerHTML, oldPanel = panel.innerHTML;
+  list.innerHTML = ''; panel.innerHTML = '';
+  var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+  list.innerHTML = oldList; panel.innerHTML = oldPanel;
+  var payload = JSON.stringify(DATA).replace(/<\//g, '<\\/');
+  html = html.replace(/(<script id="embedded" type="application\/json">)[\s\S]*?(<\/script>)/,
+    function(m, a, b){ return a + payload + b; });
+  html = html.replace(/(<div class="load-note" id="loadNote">)[\s\S]*?(<\/div>)/,
+    function(m, a, b){ return a + b; });
+  var stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  downloadFile('抖音楼层对话可视化_' + stamp + '.html', html, 'text/html;charset=utf-8');
+}
+document.getElementById('saveHtml').addEventListener('click', saveAsHtml);
 document.getElementById('file').addEventListener('change', function(e){
   var f = e.target.files[0]; if (!f) return;
   var rd = new FileReader();
   rd.onload = function(){
     try {
-      DATA = JSON.parse(rd.result); me = (DATA.floor && DATA.floor.author || '').trim();
+      var d = JSON.parse(rd.result);
+      if (!d.floor || !d.replies) throw new Error('不是楼层导出 JSON（缺 floor / replies）');
+      DATA = d; me = (DATA.floor.author || '').trim();
       buildPicker(); render();
+      document.getElementById('loadNote').innerHTML =
+        '已解析 <b>' + (DATA.replies||[]).length + '</b> 条回复（' + esc(f.name) +
+        '）。刷新会恢复旧数据，<button type="button" id="doSave">点此保存为新 HTML</button>';
+      document.getElementById('doSave').addEventListener('click', saveAsHtml);
     }
     catch(err){ alert('JSON 解析失败：' + err.message); }
   };
